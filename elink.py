@@ -5,12 +5,14 @@ import stat
 import shutil
 import sys
 
+import dotbot
+
 from datetime import datetime
-from ..plugin import Plugin
-from ..util import shell_command
+from dotbot.plugin import Plugin
+from dotbot.util import shell_command
 
 
-class Link(Plugin):
+class ELink(Plugin):
     """
     Symbolically links dotfiles.
     """
@@ -275,7 +277,7 @@ class Link(Plugin):
         source = os.path.normpath(source)
 
         if self._exists(destination) or self._is_link(destination):
-            backup_dir = os.path.abspath(os.path.expanduser(backup_dir)))
+            backup_dir = os.path.abspath(os.path.expanduser(backup_dir))
             try:
                 os.makedirs(backup_dir)
             except OSError as e:
