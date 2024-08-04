@@ -1,8 +1,6 @@
 ### dotbot-link-extra
 
-old logic:
-
-    as of revision [720265](https://github.com/anishathalye/dotbot/tree/720206578a8daf1e7167200e73e314fc4b8af52e)
+old logic as of revision [720265](https://github.com/anishathalye/dotbot/tree/720206578a8daf1e7167200e73e314fc4b8af52e):
 
     link:
         when dest exists && dest is symlink to not source                                              -> invalid link
