@@ -1,8 +1,11 @@
+import yaml
 import glob
 import os
+import stat
 import shutil
 import sys
 
+from datetime import datetime
 from ..plugin import Plugin
 from ..util import shell_command
 
@@ -12,7 +15,7 @@ class Link(Plugin):
     Symbolically links dotfiles.
     """
 
-    _directive = "link"
+    _directive = "elink"
 
     def can_handle(self, directive):
         return directive == self._directive
@@ -24,7 +27,7 @@ class Link(Plugin):
 
     def _process_links(self, links):
         success = True
-        defaults = self._context.defaults().get("link", {})
+        defaults = self._context.defaults().get("elink", {})
         for destination, source in links.items():
             destination = os.path.expandvars(destination)
             relative = defaults.get("relative", False)
@@ -38,6 +41,10 @@ class Link(Plugin):
             test = defaults.get("if", None)
             ignore_missing = defaults.get("ignore-missing", False)
             exclude_paths = defaults.get("exclude", [])
+            store_perms = defaults.get("store-perms", True)
+            perms_file = defaults.get("perms-file", os.path.join(self._context.base_directory(), ".perms.yaml"))
+            backup = defaults.get("backup", True)
+            backup_dir = defaults.get("backup-dir", os.path.join(self._context.base_directory(), "backups"))
             if isinstance(source, dict):
                 # extended config
                 test = source.get("if", test)
@@ -52,6 +59,10 @@ class Link(Plugin):
                 base_prefix = source.get("prefix", base_prefix)
                 ignore_missing = source.get("ignore-missing", ignore_missing)
                 exclude_paths = source.get("exclude", exclude_paths)
+                store_perms = source.get("store-perms", store_perms)
+                perms_file = source.get("perms-file", perms_file)
+                backup = source.get("backup", backup)
+                backup_dir = source.get("backup-dir", backup_dir)
                 path = self._default_source(destination, source.get("path"))
             else:
                 path = self._default_source(destination, source)
@@ -77,6 +88,15 @@ class Link(Plugin):
                     glob_link_destination = os.path.join(destination, glob_item)
                     if create:
                         success &= self._create(glob_link_destination)
+                    if backup and self._is_path_regular(os.path.abspath(os.path.expanduser(glob_link_destination))):
+                        success &= self._backup(
+                            glob_full_item,
+                            glob_link_destination,
+                            canonical_path,
+                            backup_dir,
+                            store_perms,
+                            perms_file
+                        )
                     if force or relink:
                         success &= self._delete(
                             glob_full_item,
@@ -84,6 +104,7 @@ class Link(Plugin):
                             relative,
                             canonical_path,
                             force,
+                            ignore_missing,
                         )
                     success &= self._link(
                         glob_full_item,
@@ -95,6 +116,8 @@ class Link(Plugin):
             else:
                 if create:
                     success &= self._create(destination)
+                if backup and self._is_path_regular(os.path.abspath(os.path.expanduser(destination))):
+                    success &= self._backup(path, destination, canonical_path, backup_dir, store_perms, perms_file)
                 if not ignore_missing and not self._exists(
                     os.path.join(self._context.base_directory(), path)
                 ):
@@ -106,7 +129,7 @@ class Link(Plugin):
                     self._log.warning("Nonexistent source %s -> %s" % (destination, path))
                     continue
                 if force or relink:
-                    success &= self._delete(path, destination, relative, canonical_path, force)
+                    success &= self._delete(path, destination, relative, canonical_path, force, ignore_missing)
                 success &= self._link(path, destination, relative, canonical_path, ignore_missing)
         if success:
             self._log.info("All links have been set up")
@@ -183,6 +206,24 @@ class Link(Plugin):
         path = os.path.expanduser(path)
         return os.path.exists(path)
 
+    def _link_not_pointing_to(self, path, target):
+        """
+        Returns true if the path is a symbolic link and points to target.
+        """
+        return self._is_link(path) and self._link_destination(path) != target
+
+    def _link_points_to(self, path, target):
+        """
+        Returns true if the path is a symbolic link and points to target.
+        """
+        return self._is_link(path) and self._link_destination(path) == target
+
+    def _is_path_regular(self, path):
+        """
+        Returns true if the path exists and it isn't a symbolic link.
+        """
+        return self._exists(path) and not self._is_link(path)
+
     def _create(self, path):
         success = True
         parent = os.path.abspath(os.path.join(os.path.expanduser(path), os.pardir))
@@ -197,15 +238,15 @@ class Link(Plugin):
                 self._log.lowinfo("Creating directory %s" % parent)
         return success
 
-    def _delete(self, source, path, relative, canonical_path, force):
+    def _delete(self, source, path, relative, canonical_path, force, ignore_missing):
         success = True
         source = os.path.join(self._context.base_directory(canonical_path=canonical_path), source)
         fullpath = os.path.abspath(os.path.expanduser(path))
         if relative:
             source = self._relative_path(source, fullpath)
-        if (self._is_link(path) and self._link_destination(path) != source) or (
-            self._exists(path) and not self._is_link(path)
-        ):
+        if self._link_not_pointing_to(path, source) or \
+           self._is_path_regular(path) or \
+           (self._link_points_to(path, source) and not ignore_missing):
             removed = False
             try:
                 if os.path.islink(fullpath):
@@ -225,6 +266,92 @@ class Link(Plugin):
                 if removed:
                     self._log.lowinfo("Removing %s" % path)
         return success
+
+    def _backup(self, destination, source, canonical_path, backup_dir, store_perms, perms_file):
+        success = False
+        source = os.path.abspath(os.path.expanduser(source))
+        base_directory = self._context.base_directory(canonical_path=canonical_path)
+        destination = os.path.join(base_directory, destination)
+        source = os.path.normpath(source)
+
+        if self._exists(destination) or self._is_link(destination):
+            backup_dir = os.path.abspath(os.path.expanduser(backup_dir)))
+            try:
+                os.makedirs(backup_dir)
+            except OSError as e:
+                self._log.warning(f"{e} at {backup_dir}")
+                return False
+            filename = os.path.basename(source) + '-' + datetime.now().strftime('%Y-%m-%d-%H-%M')
+            dst = os.path.join(backup_dir, filename)
+            store_perms = False
+        else:
+            dst = destination
+        
+        copied = False
+        try:
+            if os.path.isdir(source):
+                shutil.copytree(source, dst)
+                self._log.lowinfo(f"shutil.copytree('{source}', '{dst}')")
+                copied = True
+            elif os.path.isfile(source):
+                shutil.copy2(source, dst)
+                self._log.lowinfo(f"shutil.copy2('{source}', '{dst}')")
+                copied = True
+            else:
+                self._log.warning("Path is neither file nor directory %s" % source)
+                success = False
+                
+            stats = os.stat(source)
+            os.chmod(dst, stat.S_IMODE(stats.st_mode))
+            os.chown(dst, stats.st_uid, stat.st_gid)
+        except PermissionError as e:
+            self._log.warning(f'{e} at {source} -> {dst}')
+        else:
+            if copied:
+                self._log.lowinfo(f"Copying {source} -> {destination}")
+
+        if store_perms:
+            success &= self._store_perms(dst, perms_file)
+        return success
+
+    def _store_perms(self, source, perms_file):
+        source = os.path.abspath(os.path.expanduser(source))
+
+        try: # this type of error handling is a stupid and lazy idea
+	        if self._exists(perms_file) or self._is_link(perms_file):
+	            with open(perms_file) as file:
+	                data = yaml.load(file)
+	        else:
+	            data = dict()
+	        
+	        paths = [source]
+	        if os.path.isdir(source):
+	            for root, dirs, files in os.walk(source):
+	                for path in dirs + files:
+	                    paths.append(os.path.join(root, path))
+	        
+	        stored_any = False
+	        for path in paths:
+	            if path in data:
+	                continue
+	            stats = os.stat(path)
+	            data[path] = {
+	                'mode': oct(stat.S_IMODE(stats.st_mode)),
+	                'uid': stats.st_uid,
+	                'gid': stats.st_gid
+	            }
+	            self._log.lowinfo(f"Permissions added for {path}.")
+	            stored_any = True
+	
+	        if stored_any:
+	            with open(perms_file, 'w') as file:
+	                yaml.dump(data, file)
+	            self._log.lowinfo(f"Stored permissions at {perms_file}.")
+	
+	        return True
+        except Exception as e:
+            self._log.warning(f"{e} at {source}")
+            return False
 
     def _relative_path(self, source, destination):
         """
