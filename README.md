@@ -1,5 +1,8 @@
 ### dotbot-link-extra
 
+This code sucks. I dislike the original code, and I dislike my adjustments to it. It's so badly organized so much so that scaling it was more difficult than it needed to be.
+TODO: rewrite the whole plugin from scratch this time.
+
 old logic as of revision [720265](https://github.com/anishathalye/dotbot/tree/720206578a8daf1e7167200e73e314fc4b8af52e):
 
     link:
@@ -22,9 +25,9 @@ new logic:
     !! note that I didn't test this thoroughly with all the variations of the vars, e.g. `relative`.
 
     extra options (local and defaults):
-        - store-perms := false
+        - store-perms := true
         - perms-file  := {base-directory}/.perms.yaml
-        - backup      := false
+        - backup      := true
         - backup-dir  := {base-directory}/backups/
     
     link: (same as before)
@@ -32,7 +35,7 @@ new logic:
     backup:
         when source exists -> backup to backup-directory
         else               ->
-            backup as source
+            backup as source (replace)
             when store-perms -> store permissions
 
     delete:
@@ -41,11 +44,20 @@ new logic:
             dest is regular file/dir || \
             (dest is symlink to source && !ignore-missing))
         ) && (dest is symlink || force) -> remove dest
+    
+    store-perms:
+        when source is symlink and is file -> return True
+        when source does not exist or is broken symlink -> return ignore-missing
+        paths = [source]
+        when source is dir -> recursively add everything to paths
+        store permissions, uid, and gid in perms-file
 
     when create -> create parents
     when dest is regular file/dir && backup -> backup
     when (!glob || doesn't have glob chars) && (!ignore-missing && source doesn't exist) -> nonexistent source
     when force || relink -> delete dest
+    when ignore-missing and dest is broken symlink -> continue
+    store-perms
     link
 
 TODO: there should be a script that when called, fixes the ownership and permissions of files listed in the src/perms file.

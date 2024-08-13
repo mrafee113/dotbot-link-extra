@@ -76,10 +76,19 @@ class ELink(Plugin):
 				path = self._default_source(destination, source.get("path"))
 			else:
 				path = self._default_source(destination, source)
+
+			backup_dir = os.path.normpath(
+				os.path.expandvars(os.path.expanduser(backup_dir))
+			)
+			perms_file = os.path.normpath(
+				os.path.expandvars(os.path.expanduser(perms_file))
+			)
+
 			if test is not None and not self._test_success(test):
 				self._log.lowinfo("Skipping %s" % destination)
 				continue
 			path = os.path.normpath(os.path.expandvars(os.path.expanduser(path)))
+
 			if use_glob and self._has_glob_chars(path):
 				glob_results = self._create_glob_results(path, exclude_paths)
 				self._log.lowinfo("Globs from '" + path + "': " + str(glob_results))
@@ -108,8 +117,6 @@ class ELink(Plugin):
 							glob_link_destination,
 							canonical_path,
 							backup_dir,
-							store_perms,
-							perms_file,
 						)
 					if force or relink:
 						success &= self._delete(
@@ -120,6 +127,18 @@ class ELink(Plugin):
 							force,
 							ignore_missing,
 						)
+					if (
+						ignore_missing
+						and not self._exists(glob_link_destination)
+						and self._is_link(glob_link_destination)
+					):
+						self._log.lowinfo(
+							f"Link exists {glob_full_item} -> {glob_link_destination}"
+						)
+						continue
+					success &= self._store_perms(
+						glob_full_item, perms_file, ignore_missing
+					)
 					success &= self._link(
 						glob_full_item,
 						glob_link_destination,
@@ -138,8 +157,6 @@ class ELink(Plugin):
 						destination,
 						canonical_path,
 						backup_dir,
-						store_perms,
-						perms_file,
 					)
 				if not ignore_missing and not self._exists(
 					os.path.join(self._context.base_directory(), path)
@@ -162,6 +179,14 @@ class ELink(Plugin):
 						force,
 						ignore_missing,
 					)
+				if (
+					ignore_missing
+					and not self._exists(destination)
+					and self._is_link(destination)
+				):
+					self._log.lowinfo(f"Link exists {path} -> {destination}")
+					continue
+				success &= self._store_perms(path, perms_file, ignore_missing)
 				success &= self._link(
 					path, destination, relative, canonical_path, ignore_missing
 				)
@@ -258,6 +283,12 @@ class ELink(Plugin):
 		"""
 		return self._exists(path) and not self._is_link(path)
 
+	def _resolve_absolute_src(self, source):
+		"""
+		Returns the absolute path of source.
+		"""
+		return os.path.join(self._context.base_directory(), source)
+
 	def _create(self, path):
 		success = True
 		parent = os.path.abspath(os.path.join(os.path.expanduser(path), os.pardir))
@@ -305,68 +336,76 @@ class ELink(Plugin):
 					self._log.lowinfo("Removing %s" % path)
 		return success
 
-	def _backup(
-		self, destination, source, canonical_path, backup_dir, store_perms, perms_file
-	):
-		success = False
+	def _backup(self, destination, source, canonical_path, backup_dir):
+		success = True
 		source = os.path.abspath(os.path.expanduser(source))
 		base_directory = self._context.base_directory(canonical_path=canonical_path)
 		destination = os.path.join(base_directory, destination)
 		source = os.path.normpath(source)
 
 		if self._exists(destination) or self._is_link(destination):
-			backup_dir = os.path.abspath(os.path.expanduser(backup_dir))
-			try:
-				os.makedirs(backup_dir)
-			except OSError as e:
-				self._log.warning(f"{e} at {backup_dir}")
-				return False
+			if not os.path.isdir(backup_dir):
+				try:
+					os.makedirs(backup_dir)
+				except OSError as e:
+					self._log.warning(f"{e} at {backup_dir}")
+					return False
 			filename = (
 				os.path.basename(source)
-				+ "-"
+				+ "--"
 				+ datetime.now().strftime("%Y-%m-%d-%H-%M")
 			)
 			dst = os.path.join(backup_dir, filename)
-			store_perms = False
 		else:
 			dst = destination
+
+		if os.path.exists(dst):
+			self._log.lowinfo(f"Destination Already Exists {dst}")
+			return True
 
 		copied = False
 		try:
 			if os.path.isdir(source):
 				shutil.copytree(source, dst)
-				self._log.lowinfo(f"shutil.copytree('{source}', '{dst}')")
 				copied = True
 			elif os.path.isfile(source):
 				shutil.copy2(source, dst)
-				self._log.lowinfo(f"shutil.copy2('{source}', '{dst}')")
 				copied = True
 			else:
 				self._log.warning("Path is neither file nor directory %s" % source)
-				success = False
+				return False
 
 			stats = os.stat(source)
 			os.chmod(dst, stat.S_IMODE(stats.st_mode))
 			os.chown(dst, stats.st_uid, stats.st_gid)
-		except PermissionError as e:
+		except Exception as e:
 			self._log.warning(f"{e} at {source} -> {dst}")
 		else:
 			if copied:
-				self._log.lowinfo(f"Copying {source} -> {destination}")
+				self._log.lowinfo(f"Backing up {source} -> {dst}")
 
-		if store_perms:
-			success &= self._store_perms(dst, perms_file)
 		return success
 
-	def _store_perms(self, source, perms_file):
-		source = os.path.abspath(os.path.expanduser(source))
+	def _store_perms(self, source, perms_file, ignore_missing):
+		source = os.path.normpath(os.path.expanduser(os.path.expandvars(source)))
+		source = self._resolve_absolute_src(source)
+
+		if self._is_link(source) and not os.path.isdir(source):
+			self._log.warning(f"Skipping permissions for file symlink {source}")
+			return True
+
+		if not self._exists(source):
+			self._log.warning(f"Skipping permissions for nonexistent path {source}")
+			return ignore_missing
+
+		# ensure perms-file exists
+		self._create(os.path.dirname(perms_file))
+		with open(perms_file, "a"):
+			pass
 
 		try:  # this type of error handling is a stupid and lazy idea
-			if self._exists(perms_file) or self._is_link(perms_file):
-				with open(perms_file) as file:
-					data = yaml.safe_load(file)
-			else:
-				data = dict()
+			with open(perms_file) as file:
+				data = yaml.safe_load(file) or dict()
 
 			paths = [source]
 			if os.path.isdir(source):
