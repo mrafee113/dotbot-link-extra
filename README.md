@@ -1,7 +1,10 @@
 ### dotbot-link-extra
 
 This code sucks. I dislike the original code, and I dislike my adjustments to it. It's so badly organized so much so that scaling it was more difficult than it needed to be.
+
 TODO: rewrite the whole plugin from scratch this time.
+
+WARNING: there's a bug that I didn't have time to address. for `perms-file`, if the file doesn't exist and this directive is run from inside the `sudo` directive, the perms file created will belong to root.
 
 old logic as of revision [720265](https://github.com/anishathalye/dotbot/tree/720206578a8daf1e7167200e73e314fc4b8af52e):
 
