@@ -6,6 +6,8 @@ TODO: rewrite the whole plugin from scratch this time.
 
 WARNING: there's a bug that I didn't have time to address. for `perms-file`, if the file doesn't exist and this directive is run from inside the `sudo` directive, the perms file created will belong to root.
 
+WARNING/TODO: there is some performance issues when the number of entries are a bit much... I tested it with 200 entries and the fans started spinning as if it's simulating AI or something...
+
 old logic as of revision [720265](https://github.com/anishathalye/dotbot/tree/720206578a8daf1e7167200e73e314fc4b8af52e):
 
     link:
