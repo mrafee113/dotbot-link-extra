@@ -55,6 +55,7 @@ class ELink(Plugin):
 			backup_dir = defaults.get(
 				"backup-dir", os.path.join(self._context.base_directory(), "backups")
 			)
+			replace = defaults.get("replace", True)
 			if isinstance(source, dict):
 				# extended config
 				test = source.get("if", test)
@@ -73,6 +74,7 @@ class ELink(Plugin):
 				perms_file = source.get("perms-file", perms_file)
 				backup = source.get("backup", backup)
 				backup_dir = source.get("backup-dir", backup_dir)
+				replace = source.get("replace", replace)
 				path = self._default_source(destination, source.get("path"))
 			else:
 				path = self._default_source(destination, source)
@@ -118,7 +120,7 @@ class ELink(Plugin):
 							canonical_path,
 							backup_dir,
 						)
-					if force or relink:
+					if force or relink or replace:
 						success &= self._delete(
 							glob_full_item,
 							glob_link_destination,
@@ -126,6 +128,7 @@ class ELink(Plugin):
 							canonical_path,
 							force,
 							ignore_missing,
+							replace,
 						)
 					if (
 						ignore_missing
@@ -136,9 +139,10 @@ class ELink(Plugin):
 							f"Link exists {glob_full_item} -> {glob_link_destination}"
 						)
 						continue
-					success &= self._store_perms(
-						glob_full_item, perms_file, ignore_missing
-					)
+					if store_perms:
+						success &= self._store_perms(
+							glob_full_item, perms_file, ignore_missing
+						)
 					success &= self._link(
 						glob_full_item,
 						glob_link_destination,
@@ -170,7 +174,7 @@ class ELink(Plugin):
 						"Nonexistent source %s -> %s" % (destination, path)
 					)
 					continue
-				if force or relink:
+				if force or relink or replace:
 					success &= self._delete(
 						path,
 						destination,
@@ -178,6 +182,7 @@ class ELink(Plugin):
 						canonical_path,
 						force,
 						ignore_missing,
+						replace,
 					)
 				if (
 					ignore_missing
@@ -186,7 +191,8 @@ class ELink(Plugin):
 				):
 					self._log.lowinfo(f"Link exists {path} -> {destination}")
 					continue
-				success &= self._store_perms(path, perms_file, ignore_missing)
+				if store_perms:
+					success &= self._store_perms(path, perms_file, ignore_missing)
 				success &= self._link(
 					path, destination, relative, canonical_path, ignore_missing
 				)
@@ -303,7 +309,31 @@ class ELink(Plugin):
 				self._log.lowinfo("Creating directory %s" % parent)
 		return success
 
-	def _delete(self, source, path, relative, canonical_path, force, ignore_missing):
+	def _remove(self, path, force):
+		success = True
+		removed = False
+		try:
+			if os.path.islink(path):
+				os.unlink(path)
+				removed = True
+			elif force:
+				if os.path.isdir(path):
+					shutil.rmtree(path)
+					removed = True
+				else:
+					os.remove(path)
+					removed = True
+		except OSError:
+			self._log.warning("Failed to remove %s" % path)
+			success = False
+		else:
+			if removed:
+				self._log.lowinfo("Removing %s" % path)
+		return success
+
+	def _delete(
+		self, source, path, relative, canonical_path, force, ignore_missing, replace
+	):
 		success = True
 		source = os.path.join(
 			self._context.base_directory(canonical_path=canonical_path), source
@@ -316,24 +346,9 @@ class ELink(Plugin):
 			or self._is_path_regular(path)
 			or (self._link_points_to(path, source) and not ignore_missing)
 		):
-			removed = False
-			try:
-				if os.path.islink(fullpath):
-					os.unlink(fullpath)
-					removed = True
-				elif force:
-					if os.path.isdir(fullpath):
-						shutil.rmtree(fullpath)
-						removed = True
-					else:
-						os.remove(fullpath)
-						removed = True
-			except OSError:
-				self._log.warning("Failed to remove %s" % path)
-				success = False
-			else:
-				if removed:
-					self._log.lowinfo("Removing %s" % path)
+			success &= self._remove(fullpath, force)
+		if self._exists(source) and self._is_path_regular(path) and replace:
+			success &= self._remove(fullpath, True)
 		return success
 
 	def _backup(self, destination, source, canonical_path, backup_dir):

@@ -32,6 +32,7 @@ new logic:
         - perms-file  := {base-directory}/.perms.yaml
         - backup      := true
         - backup-dir  := {base-directory}/backups/
+        - replace     := true
     
     link: (same as before)
 
@@ -47,6 +48,7 @@ new logic:
             dest is regular file/dir || \
             (dest is symlink to source && !ignore-missing))
         ) && (dest is symlink || force) -> remove dest
+        when (source exists && dest is regular file/dir && replace) -> remove dest
     
     store-perms:
         when source is symlink and is file -> return True
@@ -58,9 +60,9 @@ new logic:
     when create -> create parents
     when dest is regular file/dir && backup -> backup
     when (!glob || doesn't have glob chars) && (!ignore-missing && source doesn't exist) -> nonexistent source
-    when force || relink -> delete dest
+    when force || relink || replace -> delete dest
     when ignore-missing and dest is broken symlink -> continue
-    store-perms
+    when store-perms -> store-perms
     link
 
 TODO: there should be a script that when called, fixes the ownership and permissions of files listed in the src/perms file.
