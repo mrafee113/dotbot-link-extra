@@ -43,7 +43,7 @@ new logic:
             when store-perms -> store permissions
 
     delete:
-        when (
+        when !replace && (
             dest is symlink to not source || \
             dest is regular file/dir || \
             (dest is symlink to source && !ignore-missing))

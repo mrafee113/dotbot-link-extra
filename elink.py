@@ -341,7 +341,7 @@ class ELink(Plugin):
 		fullpath = os.path.abspath(os.path.expanduser(path))
 		if relative:
 			source = self._relative_path(source, fullpath)
-		if (
+		if not replace and (
 			self._link_not_pointing_to(path, source)
 			or self._is_path_regular(path)
 			or (self._link_points_to(path, source) and not ignore_missing)
