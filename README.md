@@ -45,12 +45,12 @@ new logic:
             when store-perms -> store permissions
 
     delete:
-        when !replace && (
+        when (source exists && dest is regular file/dir && replace) -> remove dest
+        else when (
             dest is symlink to not source || \
             dest is regular file/dir || \
-            (dest is symlink to source && !ignore-missing))
+            (dest is symlink to source && source doesn't exist && !ignore-missing))
         ) && (dest is symlink || force) -> remove dest
-        when (source exists && dest is regular file/dir && replace) -> remove dest
     
     store-perms:
         when source is symlink and is file -> return True

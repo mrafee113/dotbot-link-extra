@@ -341,14 +341,18 @@ class ELink(Plugin):
 		fullpath = os.path.abspath(os.path.expanduser(path))
 		if relative:
 			source = self._relative_path(source, fullpath)
-		if not replace and (
-			self._link_not_pointing_to(path, source)
-			or self._is_path_regular(path)
-			or (self._link_points_to(path, source) and not ignore_missing)
-		):
-			success &= self._remove(fullpath, force)
 		if self._exists(source) and self._is_path_regular(path) and replace:
 			success &= self._remove(fullpath, True)
+		elif (
+			self._link_not_pointing_to(path, source)
+			or self._is_path_regular(path)
+			or (
+				self._link_points_to(path, source)
+				and not self._exists(source)
+				and not ignore_missing
+			)
+		):
+			success &= self._remove(fullpath, force)
 		return success
 
 	def _backup(self, destination, source, canonical_path, backup_dir):
