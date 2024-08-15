@@ -405,8 +405,8 @@ class ELink(Plugin):
 		source = os.path.normpath(os.path.expanduser(os.path.expandvars(source)))
 		source = self._resolve_absolute_src(source)
 
-		if self._is_link(source) and not os.path.isdir(source):
-			self._log.warning(f"Skipping permissions for file symlink {source}")
+		if self._is_link(source):
+			self._log.warning(f"Skipping permissions for symlink {source}")
 			return True
 
 		if not self._exists(source):
