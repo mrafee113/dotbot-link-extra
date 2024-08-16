@@ -433,7 +433,9 @@ class ELink(Plugin):
 						paths.append(os.path.join(root, path))
 
 			stored_any = False
+			base = self._context.base_directory()
 			for path in paths:
+				path = os.path.relpath(path, start=base)
 				if path in data:
 					continue
 				stats = os.stat(path)
