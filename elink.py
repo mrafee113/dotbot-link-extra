@@ -4,6 +4,7 @@ import glob
 import stat
 import shutil
 
+from os.path import islink
 from datetime import datetime
 
 import yaml
@@ -507,6 +508,8 @@ class ELink(Plugin):
 		link_name = os.path.normpath(link_name)
 
 		if copy:
+			if os.path.islink(destination):
+				os.unlink(destination)
 			try:
 				if os.path.isdir(source):
 					shutil.copytree(source, destination)
