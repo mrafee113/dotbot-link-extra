@@ -35,6 +35,7 @@ new logic:
         - backup      := true
         - backup-dir  := {base-directory}/backups/
         - replace     := true
+        - copy        := false
     
     link: (same as before)
 

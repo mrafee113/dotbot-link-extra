@@ -91,6 +91,7 @@ class ELink(Plugin):
 				"backup-dir", os.path.join(self._context.base_directory(), "backups")
 			)
 			replace = defaults.get("replace", True)
+			copy = defaults.get("copy", False)
 			if isinstance(source, dict):
 				# extended config
 				test = source.get("if", test)
@@ -110,6 +111,7 @@ class ELink(Plugin):
 				backup = source.get("backup", backup)
 				backup_dir = source.get("backup-dir", backup_dir)
 				replace = source.get("replace", replace)
+				copy = source.get("copy", copy)
 				path = self._default_source(destination, source.get("path"))
 			else:
 				path = self._default_source(destination, source)
@@ -186,6 +188,7 @@ class ELink(Plugin):
 						relative,
 						canonical_path,
 						ignore_missing,
+						copy,
 					)
 			else:
 				if create:
@@ -231,7 +234,7 @@ class ELink(Plugin):
 				if store_perms:
 					success &= self._store_perms(path, perms_file, ignore_missing)
 				success &= self._link(
-					path, destination, relative, canonical_path, ignore_missing
+					path, destination, relative, canonical_path, ignore_missing, copy
 				)
 		for filepath in list(self.perms_fds.keys()):
 			success &= self._perms_file("write", filepath)
@@ -491,7 +494,7 @@ class ELink(Plugin):
 		destination_dir = os.path.dirname(destination)
 		return os.path.relpath(source, destination_dir)
 
-	def _link(self, source, link_name, relative, canonical_path, ignore_missing):
+	def _link(self, source, link_name, relative, canonical_path, ignore_missing, copy):
 		"""
 		Links link_name to source.
 
@@ -502,6 +505,30 @@ class ELink(Plugin):
 		base_directory = self._context.base_directory(canonical_path=canonical_path)
 		absolute_source = os.path.join(base_directory, source)
 		link_name = os.path.normpath(link_name)
+
+		if copy:
+			try:
+				if os.path.isdir(source):
+					shutil.copytree(source, destination)
+					copied = True
+				elif os.path.isfile(source):
+					shutil.copy2(source, destination)
+					copied = True
+				else:
+					self._log.warning("Path is neither file nor directory %s" % source)
+					return False
+
+				stats = os.stat(source)
+				os.chmod(destination, stat.S_IMODE(stats.st_mode))
+				os.chown(destination, stats.st_uid, stats.st_gid)
+			except Exception as e:
+				self._log.warning(f"{e} at {source} -> {destination}")
+				return False
+			else:
+				if copied:
+					self._log.lowinfo(f"Copying {source} -> {destination}")
+			return True
+
 		if relative:
 			source = self._relative_path(absolute_source, destination)
 		else:
