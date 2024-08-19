@@ -26,11 +26,46 @@ class ELink(Plugin):
 	def handle(self, directive, data):
 		if directive != self._directive:
 			raise ValueError("Link cannot handle directive %s" % directive)
-		return self._process_links(data)
+		try:
+			return self._process_links(data)
+		except Exception as e:
+			self._log.warning(f"{e} at self._process_links")
+			for filepath in list(self.perms_fds.keys()):
+				self._perms_file("write", filepath)
+
+	def _perms_file(self, action, filepath):
+		self._create(os.path.dirname(filepath))
+		if action == "read":
+			if filepath in self.perms_fds:
+				return True
+			with open(filepath, "a"):
+				pass
+			with open(filepath) as file:
+				self.perms_fds[filepath] = yaml.safe_load(file)
+			if not isinstance(self.perms_fds[filepath], dict):
+				self.perms_fds[filepath] = dict()
+		elif action == "write":
+			if filepath not in self.perms_fds:
+				self._log.warning(f"{filepath} is already closed or it never existed")
+				return True
+			if not self.perms_fds[filepath]:
+				del self.perms_fds[filepath]
+				return True
+			try:
+				with open(filepath, "w") as file:
+					yaml.dump(self.perms_fds[filepath], file)
+				del self.perms_fds[filepath]
+				self._log.lowinfo(f"Saved perms file {filepath}")
+			except Exception as e:
+				self._log.warning(f"{e} at _perms_file({action}, {filepath})")
+				return False
+
+		return True
 
 	def _process_links(self, links):
 		success = True
 		defaults = self._context.defaults().get("elink", {})
+		self.perms_fds = dict()
 		for destination, source in links.items():
 			destination = os.path.expandvars(destination)
 			relative = defaults.get("relative", False)
@@ -85,6 +120,8 @@ class ELink(Plugin):
 			perms_file = os.path.normpath(
 				os.path.expandvars(os.path.expanduser(perms_file))
 			)
+			if store_perms:
+				self._perms_file("read", perms_file)
 
 			if test is not None and not self._test_success(test):
 				self._log.lowinfo("Skipping %s" % destination)
@@ -196,6 +233,8 @@ class ELink(Plugin):
 				success &= self._link(
 					path, destination, relative, canonical_path, ignore_missing
 				)
+		for filepath in list(self.perms_fds.keys()):
+			success &= self._perms_file("write", filepath)
 		if success:
 			self._log.info("All links have been set up")
 		else:
@@ -417,14 +456,8 @@ class ELink(Plugin):
 			self._log.warning(f"Skipping permissions for nonexistent path {source}")
 			return ignore_missing
 
-		# ensure perms-file exists
-		self._create(os.path.dirname(perms_file))
-		with open(perms_file, "a"):
-			pass
-
 		try:  # this type of error handling is a stupid and lazy idea
-			with open(perms_file) as file:
-				data = yaml.safe_load(file) or dict()
+			data = self.perms_fds[perms_file]
 
 			paths = [source]
 			if os.path.isdir(source):
@@ -432,7 +465,6 @@ class ELink(Plugin):
 					for path in dirs + files:
 						paths.append(os.path.join(root, path))
 
-			stored_any = False
 			base = self._context.base_directory()
 			for path in paths:
 				path = os.path.relpath(path, start=base)
@@ -445,12 +477,6 @@ class ELink(Plugin):
 					"gid": stats.st_gid,
 				}
 				self._log.lowinfo(f"Permissions added for {path}.")
-				stored_any = True
-
-			if stored_any:
-				with open(perms_file, "w") as file:
-					yaml.dump(data, file)
-				self._log.lowinfo(f"Stored permissions at {perms_file}.")
 
 			return True
 		except Exception as e:
